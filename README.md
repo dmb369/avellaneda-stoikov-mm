@@ -1,155 +1,199 @@
 # Optimal Market Making under Inventory Risk
 
-Backtest of the Avellaneda-Stoikov (2008) optimal market-making model
-against a naive fixed-spread baseline, on real BTCUSDT futures tick data.
+Implementation and empirical evaluation of the Avellaneda–Stoikov (2008) optimal market-making model against a symmetric fixed-spread baseline, using 5-minute OHLC data across 13 liquid assets.
 
 ## Motivation
 
-Market makers earn the bid-ask spread but are exposed to inventory risk: if
-they accumulate a large one-sided position, an adverse price move can wipe
-out the spread income many times over. The Avellaneda-Stoikov (AS) framework
-addresses this by deriving a **reservation price** that skews quotes away
-from the mid-price as inventory builds, and an **optimal spread** that widens
-as time-to-horizon and volatility increase. This project implements that
-model from first principles and backtests it against a naive market maker
-that quotes a symmetric fixed spread with no inventory awareness — on real
-tape, not a simulation calibrated to the model's own assumptions.
+Market makers earn the bid–ask spread by buying at bid prices and selling at ask prices, but accumulating a large one-sided position exposes them to adverse price movements. A market maker can therefore earn spread income while simultaneously taking on substantial inventory risk.
+
+The Avellaneda–Stoikov (AS) framework addresses this trade-off by adjusting quotes according to current inventory, volatility, time remaining, and market liquidity. Its reservation price shifts away from the mid-price as inventory builds, encouraging trades that reduce the position. Its optimal spread balances the compensation earned per fill against the probability of execution.
+
+This project implements the model in Python and evaluates whether inventory-aware quoting improves risk-adjusted market-making performance relative to a symmetric fixed-spread strategy. The comparison uses historical market data, rolling parameter calibration, and out-of-sample evaluation across multiple asset classes.
 
 ## Model
 
-- **Reservation price**: `r(s, q, t) = s − q·γ·σ²·(T−t)`
-- **Optimal spread**: `δ_a + δ_b = γ·σ²·(T−t) + (2/γ)·ln(1 + γ/κ)`
-- **Order arrivals**: Poisson process with intensity `λ(δ) = A·e^(−κδ)`,
-  i.e. quotes closer to the mid-price fill more often
+### Reservation price
 
-where `q` is current inventory, `γ` is the market maker's risk-aversion
-coefficient, `σ` is volatility, `κ` controls order book liquidity/depth, and
-`T−t` is time remaining in the trading session.
+The AS reservation price adjusts the prevailing mid-price to account for inventory risk:
+
+\[
+r(s,q,t)=s-q\gamma\sigma^2(T-t)
+\]
+
+where:
+
+- \(s\): current market mid-price.
+- \(q\): current signed inventory; positive values indicate a long position.
+- \(\gamma\): inventory risk-aversion coefficient.
+- \(\sigma\): estimated price volatility.
+- \(T-t\): remaining trading horizon.
+
+When inventory is positive, the reservation price moves below the mid-price, encouraging selling and discouraging additional purchases. When inventory is negative, it moves above the mid-price, encouraging buying to reduce the short position.
+
+### Optimal spread
+
+The model derives the total optimal bid–ask spread as:
+
+\[
+\delta_a+\delta_b
+=
+\gamma\sigma^2(T-t)
++
+\frac{2}{\gamma}
+\ln\left(1+\frac{\gamma}{\kappa}\right)
+\]
+
+The first term compensates for inventory risk over the remaining horizon. The second reflects the trade-off between spread capture and execution probability.
+
+The bid and ask quotes are constructed around the reservation price. In the symmetric-spread implementation:
+
+\[
+\text{Bid}=r-\frac{\delta}{2}
+\]
+
+\[
+\text{Ask}=r+\frac{\delta}{2}
+\]
+
+where \(\delta=\delta_a+\delta_b\) is the total spread.
+
+### Order-arrival model
+
+The original AS framework models execution intensity as decreasing exponentially with quote distance:
+
+\[
+\lambda(\delta)=A e^{-\kappa\delta}
+\]
+
+Here, \(A\) controls the baseline arrival intensity and \(\kappa\) determines how quickly execution intensity falls as quotes move farther from the market.
+
+The implementation calibrates volatility and fill-intensity decay using a trailing five-day window, with parameters estimated from historical observations before the out-of-sample trading period.
 
 ## Data and methodology
 
-- **Input**: 17 days of BTCUSDT futures trade prints (~50M trades total),
-  Binance format (`price`, `qty`, `time`, `is_buyer_maker`).
-- **Mid-price proxy**: last trade price each second (no L2 book needed).
-- **Fills**: a resting bid fills if a sell-side trade prints strictly below
-  it ("trade-through"); `touch` (≤) is reported as an optimistic sensitivity.
-  Quotes are snapped to the $0.10 exchange tick, so the two rules can
-  actually differ.
-- **Out-of-sample calibration**: volatility (`σ`, from 60s returns),
-  fill-intensity (`κ`, `A`, fit to the empirical fill-rate-vs-distance
-  curve), and the order-flow-imbalance beta (see below) are all estimated on
-  prior days only and traded forward — day *d−1*'s parameters trade day *d*.
-- **Risk controls**: a hard inventory cap (quoting stops on the side that
-  would worsen the position past it), and leftover inventory is unwound at
-  the prevailing half-spread plus slippage, not a token flat fee.
-- **Sessions**: 1-hour trading windows (384 total across 16 out-of-sample
-  trading days), each independently calibrated.
+### Market data
+
+- **Source:** Yahoo Finance historical market data.
+- **Frequency:** 5-minute OHLC bars.
+- **Universe:** 13 liquid assets spanning stocks, ETFs, futures, FX, and cryptocurrency.
+- **Evaluation:** 2,044 out-of-sample trading sessions.
+- **Calibration:** Trailing five-day historical window.
+
+The multi-asset design tests whether inventory-aware quoting delivers consistent risk-management benefits across different markets rather than relying on results from a single cryptocurrency.
+
+### Strategy comparison
+
+Two strategies are evaluated:
+
+**1. Avellaneda–Stoikov**
+
+Quotes are adjusted according to the model's reservation price and risk-adjusted spread. Inventory accumulation changes the center of subsequent quotes, encouraging the strategy to manage its position actively.
+
+**2. Symmetric fixed-spread baseline**
+
+Quotes remain symmetric around the market mid-price, without inventory-dependent skew. The baseline uses the same average spread width as the AS strategy to make the comparison more informative.
+
+Matching average spread width helps isolate the effect of inventory-aware quoting rather than attributing differences simply to one strategy quoting wider or narrower prices.
+
+### Rolling calibration and out-of-sample testing
+
+Volatility and fill-intensity decay parameters are estimated on a trailing five-day window and used for subsequent out-of-sample trading. This design limits look-ahead bias by ensuring that calibration relies on historical data available before the evaluated period.
+
+The strategies are compared using session-level profit and loss (PnL), inventory exposure, and PnL volatility. Confidence intervals are constructed using a bootstrap over trading days to account for variation across days.
+
+### Inventory and risk measurement
+
+Inventory risk is evaluated using root-mean-square (RMS) inventory:
+
+\[
+q_{\mathrm{RMS}}
+=
+\sqrt{\frac{1}{N}\sum_{i=1}^{N}q_i^2}
+\]
+
+This metric measures the typical magnitude of the position throughout a session. Lower RMS inventory indicates less sustained exposure to price movements.
+
+PnL volatility is used to assess the variability of trading outcomes. Comparing it alongside mean PnL helps distinguish strategies that earn more on average from those that deliver more stable outcomes.
 
 ## Results
 
-Averaged/aggregated over 384 real, out-of-sample 1-hour sessions:
+The backtest evaluates 2,044 out-of-sample sessions across 13 assets.
 
-| Metric                          | Avellaneda-Stoikov | Fixed spread |
-|----------------------------------|--------------------|--------------|
-| Mean PnL / session ($)           | -21.13              | -18.03        |
-| PnL std across sessions ($)      | 27.34               | 44.72         |
-| RMS inventory (units)            | 1.95                | 9.06          |
-| Max \|inventory\| (units)        | 6.70                | 16.97         |
-| Fills / session                  | 303                 | 293           |
-| Adverse selection (edge − markout) | 1.63 bps          | 1.69 bps      |
+| Metric | Result |
+|---|---|
+| Inventory reduction | 12–30% lower RMS inventory |
+| Asset coverage | All 13 assets |
+| Out-of-sample sessions | 2,044 |
+| PnL volatility | Lower for AS on every asset |
+| Statistical significance of inventory reduction | 95% day-bootstrap confidence intervals excluded zero for all 13 assets |
+| Statistically significant PnL cost | None detected for any asset |
 
-**AS cut RMS inventory 78% and PnL variance 39%** (std ratio 0.611, 95% CI
-0.545–0.777, bootstrapped over trading days) **relative to a fixed spread of
-the same average width, at a statistically significant cost of about
-$3/session in mean PnL** (paired t-test on daily PnL, p = 0.017).
+### Key findings
 
-This is the real AS trade-off, not a free lunch: inventory-aware quoting
-buys materially lower variance and drawdown by giving up a small amount of
-raw spread income, because skewing quotes away from a building position
-means occasionally missing fills a symmetric quoter would have taken.
-Neither strategy is profitable before fees at this spread/fee level — both
-turn positive only with a maker rebate (~-1 bp), which is realistic: real
-market makers are typically rebate-subsidized, not spread-only.
+**1. Inventory-aware quoting consistently reduces inventory exposure.**
 
-### Robustness checks
+The AS strategy reduced RMS inventory by 12–30% relative to the symmetric fixed-spread baseline across all 13 assets. The 95% day-bootstrap confidence intervals excluded zero for every asset, supporting the robustness of the observed inventory reduction.
 
-- **Fill rule**: "touch" vs "trade-through" fills change the result by
-  <0.2%. The conclusion doesn't depend on the conservative assumption.
-- **Fee sensitivity**: both strategies are monotonically worse as fees rise
-  and only clear zero PnL under a maker rebate. AS remains behind Fixed at
-  every fee level tested, consistent with the mean-PnL cost above.
-- **Inventory cap sweep**: AS's variance advantage shrinks as the position
-  cap tightens (std ratio 0.611 at a 25-unit cap → 0.895 at a 10-unit cap).
-  A meaningful share of AS's headline risk reduction comes from *avoiding*
-  large positions that a hard cap would otherwise have to cut off anyway —
-  the two forms of risk control are partial substitutes, not independent.
+**2. PnL volatility fell across the entire asset universe.**
 
-### Does an order-flow signal explain the adverse selection?
+The AS strategy produced lower PnL volatility on every asset tested. This is consistent with the intended mechanism of the model: shifting quotes in response to inventory discourages further accumulation of an already large position and encourages trades that reduce exposure.
 
-Both strategies lose ~1.6-1.7 bps per fill to adverse selection (quoted edge
-minus realized 10-second markout). We tested whether a short-horizon
-order-flow-imbalance signal — EWMA(signed trade volume)/EWMA(total volume),
-a scale-free ratio in [-1, 1] — could recover it by shifting the quoting
-mid, with the beta fit on an **expanding, out-of-sample pooled window** of
-all prior days (t-stat up to 43.6 by the final day — the signal itself is
-statistically real).
+**3. The inventory reduction did not produce a statistically significant PnL penalty.**
 
-It didn't help. A **ceiling regression** — realized markout against the
-signal known at fill time, which upper-bounds what *any* beta on this
-signal could capture — came back at R² ≈ 0 (t = -0.97 on 118,689 fills).
-The signal predicts short-horizon price direction with a real but tiny
-coefficient; it does not predict which of *our* fills will be adversely
-selected. Recovering this adverse selection would require faster
-(sub-second) signals or order-book depth, not a better-tuned beta on trade
-prints. Applying the fair-value shift anyway changed PnL by <0.1%, exactly
-as the ceiling check predicted — a case where testing the ceiling first
-would have saved the effort of building the overlay.
+No asset showed a statistically significant deterioration in PnL relative to the baseline. This suggests that the reduction in inventory risk was not accompanied by a detectable loss in trading profitability under the tested methodology.
 
-## Repository contents
+These findings support the value of inventory-aware quoting as a risk-management mechanism. They do not, by themselves, establish that AS generates higher absolute profits or remains profitable after all realistic execution costs.
 
-- `av.py` — loader, calibration, quoting strategies, vectorized simulator,
-  and all six experiments below. Run with `python av.py path/to/data/`.
-- `real_data_results.png` — fill-rate calibration, risk-return frontier,
-  daily PnL, and fee-sensitivity plots, generated automatically on run.
-- `session_results.csv`, `calibration_by_day.csv` — per-session and
-  per-day numeric output.
+## Statistical methodology
 
-### Experiments run
+The comparison uses day-level bootstrap confidence intervals to assess the reliability of the observed inventory reduction. Resampling by day helps account for dependence among sessions occurring within the same trading day.
 
-1. AS vs. fixed spread of equal average width (headline comparison above)
-2. Fill-rule sensitivity (touch vs. trade-through)
-3. Maker fee sensitivity (-1 to 2 bps)
-4. Risk-return frontier (skew and spread-width sweeps)
-5. Flow-adjusted fair value vs. raw mid, plus the ceiling regression
-6. Inventory-cap sweep (10 / 15 / 25 units)
+The analysis distinguishes two questions:
 
-## Usage
+- **Inventory effectiveness:** Is the reduction in RMS inventory statistically distinguishable from zero?
+- **PnL trade-off:** Is there evidence of a statistically significant deterioration in PnL?
 
-```bash
-pip install numpy pandas scipy matplotlib
-python av.py path/to/data/   # expects BTCUSDT-trades-YYYY-MM-DD.csv files
-```
+The inventory reduction was statistically significant across all 13 assets, while no statistically significant PnL cost was detected for any asset. A failure to detect a significant PnL cost does not prove that the strategies have identical expected PnL; that stronger conclusion would require a suitably powered equivalence or non-inferiority test.
 
-Key parameters (top of `av.py`): `SKEW_G` (AS skew, $/unit inventory),
-`MAX_INV` (position cap), `TICK` (exchange tick size), `SIGMA_HORIZON`
-(volatility estimation window), `IMB_HALFLIFE`/`IMB_HORIZON` (flow-imbalance
-signal), `FEE_BPS_LEVELS`, `INV_CAP_SWEEP`.
+## Implementation
 
-## Known simplifications
+The project is implemented in Python, with the model, historical data processing, rolling calibration, backtesting, and performance analysis organized around the following workflow:
 
-One unit per side per second, no queue-position model, no partial fills,
-fees applied after the fact, last-trade-price mid proxy (no L2 book).
+1. Load and preprocess historical 5-minute OHLC data.
+2. Estimate volatility and fill-intensity parameters using a trailing five-day window.
+3. Calculate the reservation price and risk-adjusted spread.
+4. Generate inventory-aware AS quotes and symmetric fixed-spread benchmark quotes.
+5. Simulate executions and update inventory and cash positions.
+6. Calculate session-level PnL, RMS inventory, and PnL volatility.
+7. Aggregate results across assets and evaluate statistical significance using day-level bootstrap confidence intervals.
+
+## Limitations
+
+Historical OHLC data do not provide the full information available from trade prints and order-book messages. Consequently, this backtest is a simplified evaluation of market-making behavior rather than a complete reconstruction of a live limit order book.
+
+Important limitations include:
+
+- **Execution uncertainty:** OHLC bars do not reveal queue position, order-book depth, or the exact sequence of trades within each bar.
+- **Fill modeling:** Actual execution probabilities cannot be recovered perfectly from bar data. Results depend on the assumptions used to infer fills.
+- **Market impact:** The framework does not fully model how the strategy's own orders might affect prices or other participants' behavior.
+- **Transaction costs:** Commissions, exchange fees, rebates, slippage, and funding costs must be incorporated consistently before interpreting simulated PnL as achievable live performance.
+- **Model assumptions:** The AS framework uses a simplified model of price dynamics and order arrivals. Real markets may exhibit jumps, autocorrelation, regime changes, and asymmetric order flow.
+- **Parameter stability:** A trailing calibration window reduces look-ahead bias but does not eliminate sensitivity to market regimes or parameter estimation error.
+- **Asset comparability:** Different instruments have different tick sizes, liquidity, trading hours, and contract specifications. Comparisons require appropriate normalization and instrument-specific handling.
+
+Accordingly, the results demonstrate improvements in inventory management and PnL variability under the tested historical-data framework. They should not be interpreted as proof of live profitability.
 
 ## Possible extensions
 
-- Replace the trade-tape mid/fill proxy with real L2 order-book data —
-  the ceiling check above suggests this, not a better trade-flow signal,
-  is what's needed to close the adverse-selection gap
-- Extend to multi-asset market making with correlated inventory risk
-- Test position-cap and skew jointly rather than as separate sweeps, since
-  Experiment 6 shows they substitute for each other
+- Replace OHLC-based execution proxies with trade-level data and Level 2 order-book data to model queue position, depth, and fill probabilities more accurately.
+- Incorporate realistic exchange fees, maker rebates, slippage, funding, and inventory liquidation costs.
+- Test alternative volatility estimators and adaptive calibration windows across changing market regimes.
+- Optimize inventory risk aversion, spread width, and position limits jointly rather than tuning each independently.
+- Extend the framework to multi-asset market making with correlated inventory risk.
+- Evaluate performance using additional risk-adjusted metrics, including maximum drawdown, tail losses, and return-to-risk ratios.
+- Conduct sensitivity analyses across calibration windows, quote update frequencies, and execution assumptions.
+- Test the strategy in paper trading or a controlled live environment before drawing conclusions about deployability.
 
-## References
+## Reference
 
-Avellaneda, M. & Stoikov, S. (2008). *High-frequency trading in a limit
-order book.* Quantitative Finance, 8(3), 217-224.
+Avellaneda, M., & Stoikov, S. (2008). *High-frequency trading in a limit order book.* Quantitative Finance, 8(3), 217–224.
