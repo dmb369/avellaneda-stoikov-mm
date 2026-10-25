@@ -1,199 +1,106 @@
 # Optimal Market Making under Inventory Risk
 
-Implementation and empirical evaluation of the Avellaneda–Stoikov (2008) optimal market-making model against a symmetric fixed-spread baseline, using 5-minute OHLC data across 13 liquid assets.
+Backtest of the Avellaneda–Stoikov (2008) optimal market-making model against a naive fixed-spread baseline, using 5-minute Yahoo Finance OHLC data across 13 liquid assets.
 
 ## Motivation
 
-Market makers earn the bid–ask spread by buying at bid prices and selling at ask prices, but accumulating a large one-sided position exposes them to adverse price movements. A market maker can therefore earn spread income while simultaneously taking on substantial inventory risk.
+Market makers earn the bid–ask spread but are exposed to inventory risk: if they accumulate a large one-sided position, an adverse price move can wipe out the spread income many times over. The Avellaneda–Stoikov (AS) framework addresses this by deriving a **reservation price** that skews quotes away from the mid-price as inventory builds, and an **optimal spread** that adjusts to volatility, time-to-horizon, and market liquidity.
 
-The Avellaneda–Stoikov (AS) framework addresses this trade-off by adjusting quotes according to current inventory, volatility, time remaining, and market liquidity. Its reservation price shifts away from the mid-price as inventory builds, encouraging trades that reduce the position. Its optimal spread balances the compensation earned per fill against the probability of execution.
-
-This project implements the model in Python and evaluates whether inventory-aware quoting improves risk-adjusted market-making performance relative to a symmetric fixed-spread strategy. The comparison uses historical market data, rolling parameter calibration, and out-of-sample evaluation across multiple asset classes.
+This project implements the model in Python and backtests it against a naive market maker that quotes a symmetric fixed spread with no inventory awareness. Using historical market data across multiple asset classes, the project evaluates whether inventory-aware quoting reduces inventory exposure and PnL volatility without a statistically significant deterioration in PnL.
 
 ## Model
 
-### Reservation price
+- **Reservation price**: `r(s, q, t) = s − q·γ·σ²·(T−t)`
+- **Optimal spread**: `δ_a + δ_b = γ·σ²·(T−t) + (2/γ)·ln(1 + γ/κ)`
+- **Order arrivals**: `λ(δ) = A·e^(−κδ)`, i.e. quotes closer to the mid-price fill more often.
 
-The AS reservation price adjusts the prevailing mid-price to account for inventory risk:
+where `q` is current inventory, `γ` is the market maker's risk-aversion coefficient, `σ` is volatility, `κ` controls how quickly order-arrival intensity decays with quote distance, and `T−t` is time remaining in the trading session.
 
-\[
-r(s,q,t)=s-q\gamma\sigma^2(T-t)
-\]
-
-where:
-
-- \(s\): current market mid-price.
-- \(q\): current signed inventory; positive values indicate a long position.
-- \(\gamma\): inventory risk-aversion coefficient.
-- \(\sigma\): estimated price volatility.
-- \(T-t\): remaining trading horizon.
-
-When inventory is positive, the reservation price moves below the mid-price, encouraging selling and discouraging additional purchases. When inventory is negative, it moves above the mid-price, encouraging buying to reduce the short position.
-
-### Optimal spread
-
-The model derives the total optimal bid–ask spread as:
-
-\[
-\delta_a+\delta_b
-=
-\gamma\sigma^2(T-t)
-+
-\frac{2}{\gamma}
-\ln\left(1+\frac{\gamma}{\kappa}\right)
-\]
-
-The first term compensates for inventory risk over the remaining horizon. The second reflects the trade-off between spread capture and execution probability.
-
-The bid and ask quotes are constructed around the reservation price. In the symmetric-spread implementation:
-
-\[
-\text{Bid}=r-\frac{\delta}{2}
-\]
-
-\[
-\text{Ask}=r+\frac{\delta}{2}
-\]
-
-where \(\delta=\delta_a+\delta_b\) is the total spread.
-
-### Order-arrival model
-
-The original AS framework models execution intensity as decreasing exponentially with quote distance:
-
-\[
-\lambda(\delta)=A e^{-\kappa\delta}
-\]
-
-Here, \(A\) controls the baseline arrival intensity and \(\kappa\) determines how quickly execution intensity falls as quotes move farther from the market.
-
-The implementation calibrates volatility and fill-intensity decay using a trailing five-day window, with parameters estimated from historical observations before the out-of-sample trading period.
+The reservation price shifts below the mid-price when inventory is positive and above it when inventory is negative, encouraging trades that reduce the existing position.
 
 ## Data and methodology
 
-### Market data
-
-- **Source:** Yahoo Finance historical market data.
-- **Frequency:** 5-minute OHLC bars.
-- **Universe:** 13 liquid assets spanning stocks, ETFs, futures, FX, and cryptocurrency.
-- **Evaluation:** 2,044 out-of-sample trading sessions.
-- **Calibration:** Trailing five-day historical window.
-
-The multi-asset design tests whether inventory-aware quoting delivers consistent risk-management benefits across different markets rather than relying on results from a single cryptocurrency.
-
-### Strategy comparison
-
-Two strategies are evaluated:
-
-**1. Avellaneda–Stoikov**
-
-Quotes are adjusted according to the model's reservation price and risk-adjusted spread. Inventory accumulation changes the center of subsequent quotes, encouraging the strategy to manage its position actively.
-
-**2. Symmetric fixed-spread baseline**
-
-Quotes remain symmetric around the market mid-price, without inventory-dependent skew. The baseline uses the same average spread width as the AS strategy to make the comparison more informative.
-
-Matching average spread width helps isolate the effect of inventory-aware quoting rather than attributing differences simply to one strategy quoting wider or narrower prices.
-
-### Rolling calibration and out-of-sample testing
-
-Volatility and fill-intensity decay parameters are estimated on a trailing five-day window and used for subsequent out-of-sample trading. This design limits look-ahead bias by ensuring that calibration relies on historical data available before the evaluated period.
-
-The strategies are compared using session-level profit and loss (PnL), inventory exposure, and PnL volatility. Confidence intervals are constructed using a bootstrap over trading days to account for variation across days.
-
-### Inventory and risk measurement
-
-Inventory risk is evaluated using root-mean-square (RMS) inventory:
-
-\[
-q_{\mathrm{RMS}}
-=
-\sqrt{\frac{1}{N}\sum_{i=1}^{N}q_i^2}
-\]
-
-This metric measures the typical magnitude of the position throughout a session. Lower RMS inventory indicates less sustained exposure to price movements.
-
-PnL volatility is used to assess the variability of trading outcomes. Comparing it alongside mean PnL helps distinguish strategies that earn more on average from those that deliver more stable outcomes.
+- **Input**: 5-minute Yahoo Finance OHLC bars across 13 liquid assets spanning stocks, ETFs, futures, FX, and crypto.
+- **Calibration**: Volatility (`σ`) and fill-intensity decay (`κ`) are calibrated using a trailing 5-day window, with parameters estimated from prior data and applied out of sample.
+- **Strategies**: AS inventory-aware quoting versus a symmetric fixed-spread baseline with the same average spread width.
+- **Out-of-sample testing**: 2,044 sessions across 13 assets, with rolling calibration to limit look-ahead bias.
+- **Risk measurement**: RMS inventory measures typical position exposure; PnL volatility measures the variability of trading outcomes.
+- **Statistical testing**: 95% confidence intervals are estimated using a bootstrap over trading days.
 
 ## Results
 
-The backtest evaluates 2,044 out-of-sample sessions across 13 assets.
+Across 2,044 out-of-sample sessions on 13 assets:
 
-| Metric | Result |
-|---|---|
-| Inventory reduction | 12–30% lower RMS inventory |
-| Asset coverage | All 13 assets |
-| Out-of-sample sessions | 2,044 |
-| PnL volatility | Lower for AS on every asset |
-| Statistical significance of inventory reduction | 95% day-bootstrap confidence intervals excluded zero for all 13 assets |
-| Statistically significant PnL cost | None detected for any asset |
+| Metric | Avellaneda–Stoikov | Fixed spread |
+|---|---|---|
+| RMS inventory | 12–30% lower across assets | Baseline |
+| PnL volatility | Lower on every asset | Higher on every asset |
+| Inventory reduction significance | 95% bootstrap CIs excluded zero for all 13 assets | — |
+| Statistically significant PnL cost | None detected on any asset | — |
 
-### Key findings
+**AS reduced RMS inventory by 12–30% across all 13 assets and lowered PnL volatility on every asset**, with 95% day-bootstrap confidence intervals excluding zero for the inventory reduction on all assets.
 
-**1. Inventory-aware quoting consistently reduces inventory exposure.**
+No asset showed a statistically significant deterioration in PnL relative to the fixed-spread baseline. This suggests that inventory-aware quoting improved risk outcomes without a detectable PnL penalty under the tested methodology.
 
-The AS strategy reduced RMS inventory by 12–30% relative to the symmetric fixed-spread baseline across all 13 assets. The 95% day-bootstrap confidence intervals excluded zero for every asset, supporting the robustness of the observed inventory reduction.
+The result illustrates the central AS trade-off: skewing quotes in response to inventory can reduce the accumulation of large positions and stabilize PnL. However, the absence of a statistically significant PnL cost does not establish that the two strategies have identical expected returns or that either strategy is profitable after realistic execution costs.
 
-**2. PnL volatility fell across the entire asset universe.**
+## Robustness checks
 
-The AS strategy produced lower PnL volatility on every asset tested. This is consistent with the intended mechanism of the model: shifting quotes in response to inventory discourages further accumulation of an already large position and encourages trades that reduce exposure.
+- **Cross-asset consistency**: Inventory reductions were observed across all 13 assets, spanning equities, ETFs, futures, FX, and crypto.
+- **Statistical significance**: Day-bootstrap confidence intervals excluded zero for the inventory reduction on every asset.
+- **PnL trade-off**: No statistically significant PnL deterioration was detected on any asset.
+- **Out-of-sample calibration**: Parameters were estimated using a trailing 5-day window and applied to subsequent trading periods to reduce look-ahead bias.
 
-**3. The inventory reduction did not produce a statistically significant PnL penalty.**
+## Repository contents
 
-No asset showed a statistically significant deterioration in PnL relative to the baseline. This suggests that the reduction in inventory risk was not accompanied by a detectable loss in trading profitability under the tested methodology.
+- `av.py` — model implementation, rolling calibration, quoting strategies, backtesting, and performance analysis.
+- `real_data_results.png` — performance visualizations generated by the implementation, if enabled.
+- `session_results.csv` — session-level strategy results, if exported.
+- `calibration_by_day.csv` — daily calibration parameters, if exported.
 
-These findings support the value of inventory-aware quoting as a risk-management mechanism. They do not, by themselves, establish that AS generates higher absolute profits or remains profitable after all realistic execution costs.
+## Experiments run
 
-## Statistical methodology
+1. AS versus symmetric fixed spread of equal average width.
+2. Cross-asset inventory-risk comparison across 13 assets.
+3. PnL volatility comparison across strategies and assets.
+4. Statistical significance testing using day-level bootstrap confidence intervals.
+5. Out-of-sample evaluation using trailing 5-day parameter calibration.
 
-The comparison uses day-level bootstrap confidence intervals to assess the reliability of the observed inventory reduction. Resampling by day helps account for dependence among sessions occurring within the same trading day.
+## Usage
 
-The analysis distinguishes two questions:
+```bash
+pip install numpy pandas scipy matplotlib yfinance
+python av.py
+```
 
-- **Inventory effectiveness:** Is the reduction in RMS inventory statistically distinguishable from zero?
-- **PnL trade-off:** Is there evidence of a statistically significant deterioration in PnL?
+The exact command-line arguments and dependencies depend on the implementation in `av.py`.
 
-The inventory reduction was statistically significant across all 13 assets, while no statistically significant PnL cost was detected for any asset. A failure to detect a significant PnL cost does not prove that the strategies have identical expected PnL; that stronger conclusion would require a suitably powered equivalence or non-inferiority test.
+## Key parameters
 
-## Implementation
+- `SKEW_G` — inventory-skew strength or risk-aversion parameter.
+- `MAX_INV` — maximum permitted inventory, if configured.
+- `SIGMA_HORIZON` — volatility estimation window.
+- `κ` — fill-intensity decay parameter.
+- Calibration window — trailing 5-day historical window.
 
-The project is implemented in Python, with the model, historical data processing, rolling calibration, backtesting, and performance analysis organized around the following workflow:
+## Known simplifications
 
-1. Load and preprocess historical 5-minute OHLC data.
-2. Estimate volatility and fill-intensity parameters using a trailing five-day window.
-3. Calculate the reservation price and risk-adjusted spread.
-4. Generate inventory-aware AS quotes and symmetric fixed-spread benchmark quotes.
-5. Simulate executions and update inventory and cash positions.
-6. Calculate session-level PnL, RMS inventory, and PnL volatility.
-7. Aggregate results across assets and evaluate statistical significance using day-level bootstrap confidence intervals.
-
-## Limitations
-
-Historical OHLC data do not provide the full information available from trade prints and order-book messages. Consequently, this backtest is a simplified evaluation of market-making behavior rather than a complete reconstruction of a live limit order book.
-
-Important limitations include:
-
-- **Execution uncertainty:** OHLC bars do not reveal queue position, order-book depth, or the exact sequence of trades within each bar.
-- **Fill modeling:** Actual execution probabilities cannot be recovered perfectly from bar data. Results depend on the assumptions used to infer fills.
-- **Market impact:** The framework does not fully model how the strategy's own orders might affect prices or other participants' behavior.
-- **Transaction costs:** Commissions, exchange fees, rebates, slippage, and funding costs must be incorporated consistently before interpreting simulated PnL as achievable live performance.
-- **Model assumptions:** The AS framework uses a simplified model of price dynamics and order arrivals. Real markets may exhibit jumps, autocorrelation, regime changes, and asymmetric order flow.
-- **Parameter stability:** A trailing calibration window reduces look-ahead bias but does not eliminate sensitivity to market regimes or parameter estimation error.
-- **Asset comparability:** Different instruments have different tick sizes, liquidity, trading hours, and contract specifications. Comparisons require appropriate normalization and instrument-specific handling.
-
-Accordingly, the results demonstrate improvements in inventory management and PnL variability under the tested historical-data framework. They should not be interpreted as proof of live profitability.
+- 5-minute OHLC bars do not provide full trade-level or order-book information.
+- Queue position, partial fills, and exact execution priority are not fully observable from OHLC data.
+- Fill probabilities depend on the execution assumptions used in the backtest.
+- Realistic commissions, maker rebates, slippage, funding, and market impact must be modeled before drawing conclusions about live profitability.
+- The AS model's assumptions about price dynamics and order arrivals may not hold in every asset or market regime.
 
 ## Possible extensions
 
-- Replace OHLC-based execution proxies with trade-level data and Level 2 order-book data to model queue position, depth, and fill probabilities more accurately.
-- Incorporate realistic exchange fees, maker rebates, slippage, funding, and inventory liquidation costs.
-- Test alternative volatility estimators and adaptive calibration windows across changing market regimes.
-- Optimize inventory risk aversion, spread width, and position limits jointly rather than tuning each independently.
-- Extend the framework to multi-asset market making with correlated inventory risk.
-- Evaluate performance using additional risk-adjusted metrics, including maximum drawdown, tail losses, and return-to-risk ratios.
-- Conduct sensitivity analyses across calibration windows, quote update frequencies, and execution assumptions.
-- Test the strategy in paper trading or a controlled live environment before drawing conclusions about deployability.
+- Replace OHLC-based execution proxies with trade-level and Level 2 order-book data.
+- Incorporate realistic transaction costs, funding, slippage, and liquidation costs.
+- Optimize inventory skew, spread width, and position limits jointly.
+- Extend to multi-asset market making with correlated inventory risk.
+- Test alternative volatility estimators and calibration windows.
+- Evaluate maximum drawdown, tail losses, and additional risk-adjusted performance metrics.
+- Validate the strategy through paper trading before considering live deployment.
 
 ## Reference
 
-Avellaneda, M., & Stoikov, S. (2008). *High-frequency trading in a limit order book.* Quantitative Finance, 8(3), 217–224.
+Avellaneda, M. & Stoikov, S. (2008). *High-frequency trading in a limit order book.* Quantitative Finance, 8(3), 217–224.
